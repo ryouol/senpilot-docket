@@ -235,6 +235,8 @@ def check_tool_arguments(context: RunContextWrapper[RequestContext], allowed: se
 def observation(context: RequestContext) -> dict:
     if context.failure:
         return {"status": context.failure}
+    if context.meta is None:
+        raise ValueError("A successful observation requires verified matter metadata.")
     meta = {
         key: value[: 300 if key == "title" else 80]
         if isinstance(value, str) and key != "matter"
@@ -445,6 +447,8 @@ def finish(decision: Decision, context: RequestContext) -> AgentOutcome:
     if context.result:
         reply = render(context.result, context.bundles, context.skipped)
     elif decision.reason == "empty_category":
+        if context.meta is None or decision.category is None:
+            raise ValueError("An empty-category reply requires verified metadata and category.")
         reply = render_inspection(context.meta, decision.category)
     else:
         detail = (
@@ -473,7 +477,11 @@ async def run_agent(
         else None
     )
     try:
-        selected = model if model is not None else OpenAIResponsesModel(MODEL, client)
+        selected = model
+        if selected is None:
+            if client is None:
+                raise ValueError("The agent requires an OpenAI client.")
+            selected = OpenAIResponsesModel(MODEL, client)
         data = {
             "email": context.text,
             "subject": context.subject,
