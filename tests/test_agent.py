@@ -9,6 +9,8 @@ import pytest
 from agents.items import ModelResponse
 from agents.models.interface import Model, ModelTracing
 from agents.retry import ModelRetryAdvice, ModelRetryNormalizedError
+from agents.tracing import TracingProcessor, get_trace_provider, set_trace_provider
+from agents.tracing.provider import DefaultTraceProvider
 from agents.usage import Usage
 from openai import APIStatusError, InternalServerError, RateLimitError
 from openai.types.responses import (
@@ -30,6 +32,43 @@ from docket.models import (
     TabResult,
 )
 from docket.portal import PortalUnavailable
+
+
+class CapturedTraces(TracingProcessor):
+    def __init__(self):
+        self.traces, self.spans = [], []
+
+    def on_trace_start(self, trace):
+        pass
+
+    def on_trace_end(self, trace):
+        self.traces.append(trace.export())
+
+    def on_span_start(self, span):
+        pass
+
+    def on_span_end(self, span):
+        self.spans.append(span.export())
+
+    def shutdown(self):
+        pass
+
+    def force_flush(self):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def captured_traces(monkeypatch):
+    monkeypatch.delenv("OPENAI_AGENTS_DISABLE_TRACING", raising=False)
+    previous = get_trace_provider()
+    provider = DefaultTraceProvider()
+    captured = CapturedTraces()
+    provider.register_processor(captured)
+    set_trace_provider(provider)
+    try:
+        yield captured
+    finally:
+        set_trace_provider(previous)
 
 
 class ScriptedModel(Model):
@@ -191,8 +230,9 @@ def observations(items):
 
 
 @pytest.mark.parametrize("count", [0, 1])
-async def test_observed_count_changes_the_next_model_action(tmp_path, count):
+async def test_observed_count_changes_the_next_model_action(tmp_path, count, captured_traces):
     portal = PortalState(metadata(count))
+    portal.meta.title += " PRIVATE_PORTAL_FIELD"
 
     def after_inspection(items):
         observed = observations(items)[-1]
@@ -217,15 +257,35 @@ async def test_observed_count_changes_the_next_model_action(tmp_path, count):
             after_retrieval,
         ]
     )
-    result = await run_agent(email(), tmp_path, model=model, portal_factory=portal.factory)
+    inbound = email(email().text + " PRIVATE_EMAIL_FIELD")
+    result = await run_agent(inbound, tmp_path, model=model, portal_factory=portal.factory)
     assert result.decision.action == ("deliver" if count else "report")
     assert len(model.inputs) == (3 if count else 2)
     assert len(portal.requests) == count
     assert portal.inspections == ["M12205"]
-    assert all(mode == ModelTracing.DISABLED for mode in model.tracing)
+    assert all(mode == ModelTracing.ENABLED_WITHOUT_DATA for mode in model.tracing)
     assert all(settings.parallel_tool_calls is False for settings in model.settings)
     assert all(settings.store is False for settings in model.settings)
     assert "reader@example.org" not in json.dumps(model.inputs)
+    assert len(captured_traces.traces) == 1
+    trace = captured_traces.traces[0]
+    assert trace["workflow_name"] == "Docket email agent"
+    assert {span["trace_id"] for span in captured_traces.spans} == {trace["id"]}
+    functions = [
+        span["span_data"]
+        for span in captured_traces.spans
+        if span["span_data"]["type"] == "function"
+    ]
+    assert [span["name"] for span in functions] == ["inspect_matter"] + (
+        ["retrieve_documents"] if count else []
+    )
+    assert all(span["input"] is None and span["output"] is None for span in functions)
+    exported = json.dumps([captured_traces.traces, captured_traces.spans])
+    for private in ("PRIVATE_EMAIL_FIELD", "PRIVATE_PORTAL_FIELD", inbound.sender, str(tmp_path)):
+        assert private not in exported
+    events = [json.loads(line) for line in (tmp_path / "actions.jsonl").read_text().splitlines()]
+    assert events[0]["event"] == "trace_started"
+    assert {event["trace_id"] for event in events} == {trace["id"]}
     if count:
         assert sum(bundle.file_count for bundle in result.bundles) == 1
         with ZipFile(result.bundles[0].path) as archive:
@@ -480,7 +540,21 @@ async def test_action_log_excludes_private_request_text(tmp_path):
     log = (tmp_path / "actions.jsonl").read_text()
     assert private_text not in log
     assert "reader@example.org" not in log
-    assert {json.loads(line)["event"] for line in log.splitlines()} == {"model_turn", "completion"}
+    assert {json.loads(line)["event"] for line in log.splitlines()} == {
+        "trace_started",
+        "model_turn",
+        "completion",
+    }
+
+
+async def test_sdk_tracing_environment_opt_out_is_respected(tmp_path, monkeypatch, captured_traces):
+    monkeypatch.setenv("OPENAI_AGENTS_DISABLE_TRACING", "1")
+    model = ScriptedModel(
+        [decision("no_reply", "acknowledgement", matter=None, category=None, limit=None)]
+    )
+    result = await run_agent(email("Thanks!"), tmp_path, model=model)
+    assert result.decision.action == "no_reply"
+    assert captured_traces.traces == captured_traces.spans == []
 
 
 @pytest.mark.parametrize(

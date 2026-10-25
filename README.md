@@ -40,6 +40,10 @@ uv run docket status
 
 Keep one worker per mailbox and preserve its data directory. Logs: worker output and `data/jobs/`.
 
+## Watch a request
+
+Open [OpenAI Logs → Agents SDK](https://platform.openai.com/logs?api=traces) in the API key's project. New runs appear as **Docket email agent**; match the trace ID printed in the worker logs. Spans upload in the background, so refresh after a few seconds. Email text and tool payloads are excluded from traces. Set `OPENAI_AGENTS_DISABLE_TRACING=1` to disable export.
+
 ## Checks
 
 ```sh
@@ -48,7 +52,7 @@ uv run ruff check src tests
 uv run ruff format --check src tests
 ```
 
-Verified October 25: 144 offline tests pass. Live model/portal retrieval, empty-category and missing-matter checks passed. A ten-file ZIP reached an independent mailbox with matching hashes; a worker restart did not resend it.
+Verified October 25: 145 offline tests pass. Live model/portal retrieval, empty-category and missing-matter checks passed. A ten-file ZIP reached an independent mailbox with matching hashes; a worker restart did not resend it.
 
 ## Limits
 

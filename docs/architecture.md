@@ -94,4 +94,4 @@ flowchart LR
 
 The worker runs on the existing GCP VM. The updater preserves `/data` and requires a fresh heartbeat and inbox poll before accepting a replacement. Rollback uses the current shared ledger and cursor, never a stale backup. Local `docket run` uses the same agent without sending email.
 
-Action logs record selected tools, counts and outcomes without email bodies or hidden reasoning. SDK tracing export is disabled. Use `docket status` for saved delivery state; after deployment, `docker logs --tail 50 docket` shows worker output.
+Action logs record selected tools, counts and outcomes without email bodies or hidden reasoning. Each request has a trace ID linking its local events to the OpenAI Agents SDK trace viewer. SDK traces show model and tool spans with inputs and outputs excluded; export runs in the background. Use `docket status` for saved delivery state; after deployment, `docker logs --follow --since 1m docket` shows live worker output. A model's completion is separate from email delivery.
