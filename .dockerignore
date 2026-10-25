@@ -1,0 +1,16 @@
+.git
+.venv
+.env
+.env.*
+**/__pycache__
+.pytest_cache
+.ruff_cache
+data
+artifacts
+work
+dist
+tests
+docs
+*.log
+*.sqlite*
+*.eml

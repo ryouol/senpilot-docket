@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for a tested Docket update every two minutes
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=2min
+Unit=docket-update.service
+
+[Install]
+WantedBy=timers.target

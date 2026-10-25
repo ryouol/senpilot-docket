@@ -1,0 +1,12 @@
+[Unit]
+Description=Update Docket from its tested public container
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/docket-update
+TimeoutStartSec=20min
+TimeoutStopSec=300
+UMask=0077
